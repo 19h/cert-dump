@@ -11,6 +11,7 @@ mod scanner;
 mod dirscan;
 mod json_output;
 mod sqlite_output;
+mod filter;
 
 use formatter::format_certificate_list;
 use parser::parse_certificate;
@@ -88,10 +89,74 @@ struct Cli {
     /// Write results to SQLite database
     #[arg(long = "sqlite", value_name = "FILE")]
     sqlite: Option<PathBuf>,
+
+    // Filtering options
+    /// Filter by organization (O) - can be specified multiple times
+    #[arg(long = "org")]
+    org: Vec<String>,
+
+    /// Filter by organizational unit (OU) - can be specified multiple times
+    #[arg(long = "ou")]
+    ou: Vec<String>,
+
+    /// Filter by common name (CN) - can be specified multiple times
+    #[arg(long = "common")]
+    common: Vec<String>,
+
+    /// Filter by country (C) - can be specified multiple times
+    #[arg(long = "country")]
+    country: Vec<String>,
+
+    /// Filter by locality (L) - can be specified multiple times
+    #[arg(long = "locality")]
+    locality: Vec<String>,
+
+    /// Filter by state (ST) - can be specified multiple times
+    #[arg(long = "state")]
+    state: Vec<String>,
+
+    /// Filter by serial number (substring match) - can be specified multiple times
+    #[arg(long = "serial")]
+    serial: Vec<String>,
+
+    /// Filter by subject DN (substring match) - can be specified multiple times
+    #[arg(long = "subject")]
+    subject: Vec<String>,
+
+    /// Filter by issuer DN (substring match) - can be specified multiple times
+    #[arg(long = "issuer")]
+    issuer: Vec<String>,
+
+    /// Filter by public key algorithm (fuzzy: rsa, ec, sha256, etc.) - can be specified multiple times
+    #[arg(long = "key-algo")]
+    key_algo: Vec<String>,
+
+    /// Filter by signature algorithm (fuzzy: rsa, sha256, ecdsa, etc.) - can be specified multiple times
+    #[arg(long = "sig-algo")]
+    sig_algo: Vec<String>,
+
+    /// Filter by public key size in bits - can be specified multiple times
+    #[arg(long = "key-size")]
+    key_size: Vec<u32>,
+
+    /// Show only expired certificates
+    #[arg(long = "expired")]
+    expired: bool,
+
+    /// Show only currently valid certificates
+    #[arg(long = "valid")]
+    valid: bool,
+
+    /// Filter by SHA-256 fingerprint (substring match) - can be specified multiple times
+    #[arg(long = "sha256")]
+    sha256_filter: Vec<String>,
 }
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Build filter from CLI arguments
+    let filter = build_filter(&cli);
 
     // Determine if we're in single-file or multi-file mode
     let is_single_file = cli.input.len() == 1 
@@ -102,17 +167,40 @@ fn main() -> Result<()> {
 
     if is_single_file {
         // Traditional single-file mode (preserves existing behavior)
-        run_single_file_mode(&cli)?;
+        run_single_file_mode(&cli, &filter)?;
     } else {
         // Directory/multi-file mode with deduplication
-        run_directory_mode(&cli)?;
+        run_directory_mode(&cli, &filter)?;
     }
 
     Ok(())
 }
 
+/// Build certificate filter from CLI arguments
+fn build_filter(cli: &Cli) -> filter::CertFilter {
+    filter::CertFilter {
+        organizations: cli.org.clone(),
+        organizational_units: cli.ou.clone(),
+        common_names: cli.common.clone(),
+        countries: cli.country.clone(),
+        localities: cli.locality.clone(),
+        states: cli.state.clone(),
+        serials: cli.serial.clone(),
+        subjects: cli.subject.clone(),
+        issuers: cli.issuer.clone(),
+        key_algorithms: cli.key_algo.clone(),
+        signature_algorithms: cli.sig_algo.clone(),
+        key_sizes: cli.key_size.clone(),
+        expired_only: cli.expired,
+        valid_only: cli.valid,
+        not_before: None, // Can be extended later with date parsing
+        not_after: None,  // Can be extended later with date parsing
+        sha256: cli.sha256_filter.clone(),
+    }
+}
+
 /// Traditional single-file scanning mode
-fn run_single_file_mode(cli: &Cli) -> Result<()> {
+fn run_single_file_mode(cli: &Cli, filter: &filter::CertFilter) -> Result<()> {
     let input_path = &cli.input[0];
     
     // Read the binary file
@@ -130,14 +218,33 @@ fn run_single_file_mode(cli: &Cli) -> Result<()> {
         eprintln!("Found {} certificate(s)", found_certs.len());
     }
 
-    // Parse each certificate
+    // Parse each certificate and apply filter
     let mut results = Vec::new();
+    let mut filtered_count = 0;
+    
     for cert in found_certs {
         let parsed = parse_certificate(&cert.der).ok();
         if parsed.is_none() && cli.verbose {
             eprintln!("Warning: Failed to parse certificate at offset 0x{:X}", cert.offset);
         }
-        results.push((cert, parsed));
+        
+        // Apply filter
+        let passes_filter = if let Some(ref p) = parsed {
+            filter.matches(p, &cert.sha256_hex())
+        } else {
+            // If parsing failed, only include if no filters are set
+            filter.is_empty()
+        };
+        
+        if passes_filter {
+            results.push((cert, parsed));
+        } else {
+            filtered_count += 1;
+        }
+    }
+    
+    if cli.verbose && filtered_count > 0 {
+        eprintln!("Filtered out {} certificate(s) that didn't match criteria", filtered_count);
     }
 
     // Extract certificates if --dump is specified
@@ -156,7 +263,7 @@ fn run_single_file_mode(cli: &Cli) -> Result<()> {
 }
 
 /// Directory/multi-file scanning mode with duplicate detection
-fn run_directory_mode(cli: &Cli) -> Result<()> {
+fn run_directory_mode(cli: &Cli, filter: &filter::CertFilter) -> Result<()> {
     use dirscan::{ScanConfig, enumerate_files, scan_files_parallel};
 
     // Build scan configuration
@@ -201,6 +308,7 @@ fn run_directory_mode(cli: &Cli) -> Result<()> {
 
     // Collect results for processing
     let mut all_results = Vec::new();
+    let mut filtered_count = 0;
 
     // Scan files in parallel with deduplication
     scan_files_parallel(jobs, &config, |cert_info| {
@@ -214,9 +322,26 @@ fn run_directory_mode(cli: &Cli) -> Result<()> {
             );
         }
 
-        all_results.push((cert_info, parsed));
+        // Apply filter
+        let passes_filter = if let Some(ref p) = parsed {
+            filter.matches(p, &cert_info.cert.sha256_hex())
+        } else {
+            // If parsing failed, only include if no filters are set
+            filter.is_empty()
+        };
+        
+        if passes_filter {
+            all_results.push((cert_info, parsed));
+        } else {
+            filtered_count += 1;
+        }
+        
         Ok(())
     })?;
+    
+    if cli.verbose && filtered_count > 0 {
+        eprintln!("Filtered out {} certificate(s) that didn't match criteria", filtered_count);
+    }
 
     // Write to SQLite if enabled
     if let Some(ref writer) = sqlite_writer {
@@ -238,11 +363,19 @@ fn run_directory_mode(cli: &Cli) -> Result<()> {
         }
     }
 
+    // Extract certificates if --dump is specified
+    let mut output_files = None;
+    if cli.dump {
+        output_files = Some(extract_certificates_from_directory(&cli, &all_results)?);
+    } else if (cli.der || cli.pem) && cli.verbose {
+        eprintln!("Note: --der/--pem flags ignored without --dump");
+    }
+
     // Output results based on format
     if cli.json {
         output_json(&all_results)?;
     } else {
-        format_directory_results(&all_results, cli);
+        format_directory_results(&all_results, cli, output_files.as_ref());
     }
 
     Ok(())
@@ -266,6 +399,7 @@ fn output_json(
 fn format_directory_results(
     results: &[(dirscan::CertWithDuplicateInfo, Option<parser::ParsedCert>)],
     cli: &Cli,
+    output_files: Option<&Vec<PathBuf>>,
 ) {
     use formatter::colors_from_env;
     let colors = colors_from_env();
@@ -301,6 +435,36 @@ fn format_directory_results(
             total_count,
             colors.reset()
         );
+    }
+
+    // Output files section
+    if let Some(files) = output_files {
+        if !files.is_empty() {
+            println!();
+            println!(
+                "{}{}Output Files{}",
+                colors.bold(),
+                colors.bright_cyan(),
+                colors.reset()
+            );
+            println!("{}{}{}", colors.cyan(), "=".repeat(50), colors.reset());
+            println!();
+            
+            for path in files {
+                let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
+                let label = if ext == "der" { "DER" } else { "PEM" };
+                println!(
+                    "   {}{}{}{}: {}{}{}",
+                    colors.bold(),
+                    colors.cyan(),
+                    label,
+                    colors.reset(),
+                    colors.bright_cyan(),
+                    path.display(),
+                    colors.reset()
+                );
+            }
+        }
     }
 }
 
@@ -481,6 +645,61 @@ fn format_directory_certificate(
             colors.reset()
         );
     }
+}
+
+/// Extract certificates from directory scan results
+fn extract_certificates_from_directory(
+    cli: &Cli,
+    results: &[(dirscan::CertWithDuplicateInfo, Option<parser::ParsedCert>)],
+) -> Result<Vec<PathBuf>> {
+    // Check output directory
+    if cli.outdir.exists() {
+        if !cli.outdir.is_dir() {
+            anyhow::bail!("Output path exists but is not a directory: {:?}", cli.outdir);
+        }
+        if !cli.force && !is_empty_dir(&cli.outdir)? {
+            anyhow::bail!(
+                "Output directory {:?} is not empty. Use --force to overwrite.",
+                cli.outdir
+            );
+        }
+    } else {
+        fs::create_dir_all(&cli.outdir)
+            .with_context(|| format!("Failed to create output directory: {:?}", cli.outdir))?;
+    }
+
+    let mut files = Vec::new();
+
+    // Determine which formats to write
+    let write_der = cli.der || (!cli.der && !cli.pem);
+    let write_pem = cli.pem || (!cli.der && !cli.pem);
+
+    for (cert_info, _) in results {
+        let index = cert_info.global_index;
+        
+        // Write DER
+        if write_der {
+            let der_path = cli.outdir.join(format!("cert.{}.der", index));
+            fs::write(&der_path, &cert_info.cert.der)
+                .with_context(|| format!("Failed to write DER file: {:?}", der_path))?;
+            files.push(der_path.clone());
+            if cli.verbose {
+                eprintln!("Wrote {}", der_path.display());
+            }
+        }
+
+        // Write PEM
+        if write_pem {
+            let pem_path = cli.outdir.join(format!("cert.{}.pem", index));
+            write_pem_certificate(&pem_path, &cert_info.cert.der)?;
+            files.push(pem_path.clone());
+            if cli.verbose {
+                eprintln!("Wrote {}", pem_path.display());
+            }
+        }
+    }
+
+    Ok(files)
 }
 
 fn extract_certificates(
