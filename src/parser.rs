@@ -153,6 +153,18 @@ fn map_signature_oid(oid: &Oid) -> &'static str {
         // Chinese national standards (SM series)
         "1.2.156.10197.1.501" => "sm2sign-with-sm3",
         
+        // Russian national standards (GOST R 34.10-2012)
+        "1.2.643.7.1.1.3.2" => "id-tc26-signwithdigest-gost3410-12-256",
+        "1.2.643.7.1.1.3.3" => "id-tc26-signwithdigest-gost3410-12-512",
+        
+        // Post-quantum cryptography (NIST-selected algorithms)
+        // CRYSTALS-Dilithium (ML-DSA)
+        "2.16.840.1.101.3.4.3.17" => "ML-DSA-44",
+        "2.16.840.1.101.3.4.3.18" => "ML-DSA-65",
+        "2.16.840.1.101.3.4.3.19" => "ML-DSA-87",
+        // Provisional OIDs for Dilithium Round 3
+        "1.3.6.1.4.1.2.267.7.6.5" => "CRYSTALS-Dilithium(6,5)-R3",
+        
         _ => "unknown",
     }
 }
@@ -179,6 +191,25 @@ fn map_pubkey_oid(oid: &Oid) -> &'static str {
         
         // Chinese national standards
         "1.2.156.10197.1.301" => "SM2",
+        
+        // Russian national standards (GOST R 34.10-2012)
+        "1.2.643.7.1.1.1.1" => "id-tc26-gost3410-12-256",
+        "1.2.643.7.1.1.1.2" => "id-tc26-gost3410-12-512",
+        
+        // Post-quantum cryptography (NIST-selected algorithms)
+        // CRYSTALS-Dilithium (ML-DSA) - signatures
+        "2.16.840.1.101.3.4.3.17" => "ML-DSA-44",
+        "2.16.840.1.101.3.4.3.18" => "ML-DSA-65",
+        "2.16.840.1.101.3.4.3.19" => "ML-DSA-87",
+        // Provisional OIDs for Dilithium
+        "1.3.6.1.4.1.2.267.7.6.5" => "CRYSTALS-Dilithium(6,5)-R3",
+        
+        // CRYSTALS-Kyber (ML-KEM) - key encapsulation
+        "1.3.6.1.4.1.22554.5.6.1" => "ML-KEM-512",
+        "1.3.6.1.4.1.22554.5.6.2" => "ML-KEM-768",
+        "1.3.6.1.4.1.22554.5.6.3" => "ML-KEM-1024",
+        // Provisional OIDs for Kyber Round 3
+        "1.3.6.1.4.1.2.267.8.4.4" => "CRYSTALS-Kyber(1024)-R3",
         
         _ => "unknown",
     }
@@ -208,6 +239,23 @@ fn extract_key_bits(spki: &SubjectPublicKeyInfo) -> Option<u32> {
         
         // Chinese SM2 (elliptic curve)
         "1.2.156.10197.1.301" => Some(256), // SM2 uses 256-bit curve
+        
+        // Russian GOST R 34.10-2012 (elliptic curve)
+        "1.2.643.7.1.1.1.1" => Some(256), // GOST 34.10-2012 256-bit
+        "1.2.643.7.1.1.1.2" => Some(512), // GOST 34.10-2012 512-bit
+        
+        // Post-quantum cryptography
+        // CRYSTALS-Dilithium (ML-DSA) - public key sizes in bits
+        "2.16.840.1.101.3.4.3.17" => Some(1312), // ML-DSA-44 public key size
+        "2.16.840.1.101.3.4.3.18" => Some(1952), // ML-DSA-65 public key size
+        "2.16.840.1.101.3.4.3.19" => Some(2592), // ML-DSA-87 public key size
+        "1.3.6.1.4.1.2.267.7.6.5" => Some(1952), // Dilithium(6,5) R3 public key size
+        
+        // CRYSTALS-Kyber (ML-KEM) - security levels
+        "1.3.6.1.4.1.22554.5.6.1" => Some(512),  // ML-KEM-512 (NIST Level 1)
+        "1.3.6.1.4.1.22554.5.6.2" => Some(768),  // ML-KEM-768 (NIST Level 3)
+        "1.3.6.1.4.1.22554.5.6.3" => Some(1024), // ML-KEM-1024 (NIST Level 5)
+        "1.3.6.1.4.1.2.267.8.4.4" => Some(1024), // Kyber1024 R3
         
         _ => None,
     }
@@ -266,6 +314,10 @@ fn ec_bits_from_params(spki: &SubjectPublicKeyInfo) -> Option<u32> {
             
             // Chinese national standard
             "1.2.156.10197.1.301" => Some(256),  // sm2p256v1
+            
+            // Russian GOST elliptic curves
+            "1.2.643.7.1.2.1.1.1" => Some(256),  // GOST R 34.10-2012 256-bit curve
+            "1.2.643.7.1.2.1.2.1" => Some(512),  // GOST R 34.10-2012 512-bit curve
             
             _ => None,
         };

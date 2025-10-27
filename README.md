@@ -137,11 +137,22 @@ This tool recognizes and displays key information for a comprehensive set of cry
 *   **SM2:** Chinese elliptic curve public key algorithm (256-bit)
 *   **SM3:** Chinese hash algorithm
 
+**Russian GOST Standards:**
+*   **GOST R 34.10-2012:** Russian elliptic curve signature algorithm (256-bit and 512-bit variants)
+*   **Streebog (GOST R 34.11-2012):** Modern Russian hash function
+
+**Post-Quantum Cryptography (NIST PQC):**
+*   **ML-KEM (CRYSTALS-Kyber):** Key Encapsulation Mechanism (512, 768, 1024-bit security levels)
+*   **ML-DSA (CRYSTALS-Dilithium):** Digital signature algorithm (44, 65, 87 parameter sets)
+*   **Provisional Round 3 OIDs:** Support for experimental PQC implementations
+
 **Signature Algorithms Recognized:**
 *   RSA with MD5, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512
 *   ECDSA with SHA-1, SHA-224, SHA-256, SHA-384, SHA-512
 *   EdDSA (Ed25519, Ed448)
 *   SM2 with SM3
+*   GOST R 34.10-2012 with Streebog
+*   ML-DSA (Post-Quantum signatures)
 
 ### Output File Structure
 
@@ -169,6 +180,8 @@ Typical performance: Scans multi-megabyte binaries in milliseconds on modern har
 *   Certificates are reported in file offset order, not in any cryptographic chain order
 *   The tool may detect the same certificate multiple times if it appears in both DER and PEM formats at different offsets (this is intentional to support forensic analysis)
 *   Corrupted or partial certificates may be detected but will fail parsing; use `-v` to see warnings
+*   Post-Quantum Cryptography support includes experimental and provisional OIDs that may change as standards finalize
+*   Key sizes for PQC algorithms represent security parameter sizes, not classical bit-strength equivalents
 
 ### License
 
