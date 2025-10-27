@@ -14,7 +14,7 @@
 
 <br />
 
-`cert-dump` is a command-line utility for scanning binary files to find embedded X.509 certificates. It supports both DER (Distinguished Encoding Rules) and PEM (Privacy-Enhanced Mail) formats, providing detailed certificate information and optional extraction capabilities.
+`cert-dump` is a command-line utility for scanning binary files and directories to find embedded X.509 certificates. It supports both DER (Distinguished Encoding Rules) and PEM (Privacy-Enhanced Mail) formats, providing detailed certificate information, optional extraction capabilities, and intelligent duplicate detection across multiple files.
 
 ### Installation
 
@@ -66,20 +66,114 @@ Overwrites existing files in the output directory.
 cert-dump firmware.bin --dump --force
 ```
 
+**7. Recursive Directory Scan**  
+Recursively scans all files in a directory for certificates.
+
+```shell
+cert-dump -R /path/to/directory
+```
+
+**8. Recursive Scan with Extension Filter**  
+Scans only specific file types (e.g., executables, JARs, or certificate files).
+
+```shell
+cert-dump -R --ext exe,dll,jar,apk,pem,der,crt /path/to/directory
+```
+
+**9. Duplicate Detection with Annotation**  
+Finds all certificates but marks duplicates with references to first occurrence.
+
+```shell
+cert-dump -R --mark-duplicates /path/to/directory
+```
+
+**10. Unique Certificates Only**  
+Shows only the first occurrence of each unique certificate (suppresses duplicates).
+
+```shell
+cert-dump -R --unique-only /path/to/directory
+```
+
+**11. Parallel Scanning with Custom Threads**  
+Scans multiple files in parallel for faster processing.
+
+```shell
+cert-dump -R --threads 8 /large/directory
+```
+
+**12. Scan with Symlink Following and Depth Limit**  
+Follows symbolic links and limits recursion depth.
+
+```shell
+cert-dump -R --follow-symlinks --max-depth 3 /path/to/directory
+```
+
+**13. JSON Output for Automated Processing**  
+Outputs results as newline-delimited JSON with duplicate information.
+
+```shell
+cert-dump -R --json /path/to/directory > results.jsonl
+```
+
+**14. SQLite Database Export**  
+Writes all certificates and occurrences to a SQLite database for analysis.
+
+```shell
+cert-dump -R --sqlite certs.db /path/to/directory
+```
+
+**15. Combined JSON and SQLite Output**  
+Outputs JSON to stdout while simultaneously writing to SQLite.
+
+```shell
+cert-dump -R --json --sqlite certs.db /path/to/directory
+```
+
+**16. Query SQLite Results**  
+Example queries for the SQLite database.
+
+```shell
+# Find all unique certificates
+sqlite3 certs.db "SELECT sha256, subject, occurrence_count FROM certificate;"
+
+# Find all occurrences of a specific certificate
+sqlite3 certs.db "SELECT path, offset FROM occurrence WHERE sha256='...';"  
+
+# Find certificates in a specific file
+sqlite3 certs.db "SELECT DISTINCT c.* FROM certificate c JOIN occurrence o ON c.sha256=o.sha256 WHERE o.path LIKE '%filename%';"
+```
+
 ### Features
 
 *   **Fast Binary Scanning:** Uses optimized pattern matching (`memchr`) to efficiently scan large binaries for both DER and PEM certificate formats.
 *   **Dual Format Support:** Detects certificates in both DER (raw binary ASN.1) and PEM (Base64-encoded) formats.
+*   **Recursive Directory Scanning:** Scan entire directory trees with configurable depth limits and extension filters.
+*   **Parallel Processing:** Multi-threaded file scanning for high-performance analysis of large directory trees.
+*   **Intelligent Duplicate Detection:** 
+    *   SHA-256 fingerprinting to identify duplicate certificates across files
+    *   `--unique-only` mode to suppress duplicate output
+    *   `--mark-duplicates` mode to annotate duplicates with first-occurrence references
+    *   On-the-fly deduplication with occurrence counting
 *   **Detailed Certificate Metadata:** Displays comprehensive information including:
     *   Subject and Issuer Distinguished Names (DN)
     *   Serial number
+    *   SHA-256 fingerprint
     *   Validity period (Not Before/Not After dates)
     *   Public key algorithm and size (RSA, EC, Ed25519, Ed448)
     *   Signature algorithm
-    *   File offset and size
+    *   File path, offset and size
+*   **Advanced Filtering:**
+    *   Extension-based file filtering (e.g., `--ext exe,dll,jar,apk`)
+    *   Maximum file size limits to skip oversized files
+    *   Hard link detection to avoid scanning the same content twice
+    *   Symlink traversal control
+*   **Multiple Output Formats:**
+    *   **Text:** Human-readable colored terminal output with proper formatting
+    *   **JSON:** Newline-delimited JSON with full certificate metadata and duplicate tracking
+    *   **SQLite:** Relational database with `certificate` and `occurrence` tables for complex queries
+    *   Can combine formats (e.g., `--json --sqlite` for both outputs simultaneously)
 *   **Flexible Extraction:** Extract certificates in DER format, PEM format, or both (default).
-*   **Diskutil-Style Output:** Clean, colored terminal output with proper alignment and visual hierarchy.
-*   **Verbose Mode:** Additional details including DER lengths, PEM block offsets, and parse diagnostics.
+*   **Verbose Mode:** Additional details including DER lengths, PEM block offsets, worker thread status, and parse diagnostics.
 
 ### Technical Background
 
@@ -171,14 +265,35 @@ Use `--der` or `--pem` flags to restrict output to a single format.
 *   Uses `memchr` for fast pattern matching in large binaries
 *   Minimal allocations during scanning
 *   Efficient DER length parsing without backtracking
-*   Parallel-friendly architecture (single-threaded for now)
+*   Parallel multi-threaded architecture for directory scanning
+*   Work-stealing queue for load balancing across CPU cores
+*   SHA-256 fingerprinting with efficient hash-based deduplication (O(1) duplicate checks)
+*   Hard link detection to avoid redundant I/O
 
-Typical performance: Scans multi-megabyte binaries in milliseconds on modern hardware.
+**Typical performance:**
+*   Single file: Multi-megabyte binaries scanned in milliseconds
+*   Directory scanning: Scales linearly with file count and available CPU cores
+*   Memory usage: O(unique certificates) — duplicate tracking stores only fingerprints and minimal metadata
+*   Default: Uses all available CPU cores; configurable with `--threads`
 
 ### Notes
 
+**Single-file mode:**
 *   Certificates are reported in file offset order, not in any cryptographic chain order
 *   The tool may detect the same certificate multiple times if it appears in both DER and PEM formats at different offsets (this is intentional to support forensic analysis)
+*   Original output format is preserved for backward compatibility
+
+**Directory scanning mode:**
+*   Triggered automatically when multiple files are specified, `-R` flag is used, or any duplicate-detection flags are active
+*   Duplicate detection is based on SHA-256 fingerprints of DER-encoded certificate data
+*   Global certificate index is assigned in discovery order (may not be deterministic across runs due to parallel processing)
+*   Use `--unique-only` to see only first occurrences, or `--mark-duplicates` to annotate all occurrences
+*   Extension filtering is case-insensitive
+*   Hidden files are included by default
+*   Symbolic links are not followed by default; use `--follow-symlinks` to change this behavior
+*   Maximum file size limit (default 512MB) protects against excessive memory usage
+
+**General:**
 *   Corrupted or partial certificates may be detected but will fail parsing; use `-v` to see warnings
 *   Post-Quantum Cryptography support includes experimental and provisional OIDs that may change as standards finalize
 *   Key sizes for PQC algorithms represent security parameter sizes, not classical bit-strength equivalents

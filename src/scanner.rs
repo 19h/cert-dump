@@ -2,6 +2,7 @@ use anyhow::Result;
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
 use memchr::{memchr_iter, memmem};
+use sha2::{Sha256, Digest};
 use std::collections::HashSet;
 
 #[derive(Debug, Clone)]
@@ -17,6 +18,20 @@ pub struct FoundCert {
     pub raw_range_len: usize,
     pub der: Vec<u8>,
     pub source: CertSource,
+}
+
+impl FoundCert {
+    /// Compute SHA-256 fingerprint of the DER-encoded certificate
+    pub fn sha256_digest(&self) -> [u8; 32] {
+        let mut hasher = Sha256::new();
+        hasher.update(&self.der);
+        hasher.finalize().into()
+    }
+
+    /// Compute SHA-256 fingerprint as hex string
+    pub fn sha256_hex(&self) -> String {
+        hex::encode(self.sha256_digest())
+    }
 }
 
 const PEM_BEGIN: &[u8] = b"-----BEGIN CERTIFICATE-----";
