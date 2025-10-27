@@ -12,6 +12,7 @@ mod dirscan;
 mod json_output;
 mod sqlite_output;
 mod filter;
+mod tree;
 
 use formatter::format_certificate_list;
 use parser::parse_certificate;
@@ -150,6 +151,10 @@ struct Cli {
     /// Filter by SHA-256 fingerprint (substring match) - can be specified multiple times
     #[arg(long = "sha256")]
     sha256_filter: Vec<String>,
+
+    /// Display certificates in tree format showing signing relationships
+    #[arg(long = "tree")]
+    tree: bool,
 }
 
 fn main() -> Result<()> {
@@ -256,8 +261,15 @@ fn run_single_file_mode(cli: &Cli, filter: &filter::CertFilter) -> Result<()> {
     }
 
     // Print formatted output
-    let formatted = format_certificate_list(&results, output_files.as_ref(), cli.verbose);
-    print!("{}", formatted);
+    if cli.tree {
+        use formatter::colors_from_env;
+        let colors = colors_from_env();
+        let roots = tree::build_tree(&results);
+        tree::print_tree(&results, &roots, &colors);
+    } else {
+        let formatted = format_certificate_list(&results, output_files.as_ref(), cli.verbose);
+        print!("{}", formatted);
+    }
 
     Ok(())
 }
@@ -374,6 +386,11 @@ fn run_directory_mode(cli: &Cli, filter: &filter::CertFilter) -> Result<()> {
     // Output results based on format
     if cli.json {
         output_json(&all_results)?;
+    } else if cli.tree {
+        use formatter::colors_from_env;
+        let colors = colors_from_env();
+        let roots = tree::build_tree(&all_results);
+        tree::print_tree(&all_results, &roots, &colors);
     } else {
         format_directory_results(&all_results, cli, output_files.as_ref());
     }

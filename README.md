@@ -143,6 +143,42 @@ sqlite3 certs.db "SELECT path, offset FROM occurrence WHERE sha256='...';"
 sqlite3 certs.db "SELECT DISTINCT c.* FROM certificate c JOIN occurrence o ON c.sha256=o.sha256 WHERE o.path LIKE '%filename%';"
 ```
 
+**17. Certificate Chain Visualization**  
+Display certificates in a tree format showing parent-child signing relationships.
+
+```shell
+cert-dump -R --tree /path/to/directory
+```
+
+**18. Filter and Visualize Certificate Chains**  
+Combine filtering with tree visualization to focus on specific certificate types.
+
+```shell
+# Show only RSA certificates and their relationships
+cert-dump -R --tree --key-algo rsa /path/to/certs
+
+# Visualize only valid certificates
+cert-dump -R --tree --valid /path/to/certs
+```
+
+**19. Certificate Filtering**  
+Filter certificates by various fields with fuzzy matching and multiple criteria.
+
+```shell
+# Find all Apple certificates
+cert-dump -R --org Apple /System/Library/Keychains
+
+# Find expired RSA certificates
+cert-dump -R --expired --key-algo rsa /path/to/certs
+
+# Find certificates from Apple OR Google with EC keys
+cert-dump -R --org Apple --org Google --key-algo ec /path
+
+# Find weak certificates (SHA-1 or small key sizes)
+cert-dump -R --sig-algo sha1 /path
+cert-dump -R --key-algo rsa --key-size 1024 /path
+```
+
 ### Features
 
 *   **Fast Binary Scanning:** Uses optimized pattern matching (`memchr`) to efficiently scan large binaries for both DER and PEM certificate formats.
@@ -163,15 +199,26 @@ sqlite3 certs.db "SELECT DISTINCT c.* FROM certificate c JOIN occurrence o ON c.
     *   Signature algorithm
     *   File path, offset and size
 *   **Advanced Filtering:**
-    *   Extension-based file filtering (e.g., `--ext exe,dll,jar,apk`)
-    *   Maximum file size limits to skip oversized files
-    *   Hard link detection to avoid scanning the same content twice
-    *   Symlink traversal control
+    *   **File-level:** Extension-based filtering, maximum file size limits, hard link detection, symlink traversal control
+    *   **Certificate-level:** Filter by organization, common name, country, locality, state, organizational unit
+    *   **Identifier-based:** Filter by serial number, SHA-256 fingerprint, full subject/issuer DN
+    *   **Algorithm-based:** Filter by public key algorithm (RSA, EC, Ed25519, DSA, PQC) and signature algorithm (SHA-1, SHA-256, ECDSA, etc.)
+    *   **Key size:** Filter by public key bit length (e.g., 2048, 4096)
+    *   **Validity:** Filter by expiration status (--expired, --valid)
+    *   **Fuzzy matching:** Case-insensitive substring search with smart algorithm variant matching
+    *   **Multiple values:** Specify filters multiple times for OR logic; different filters use AND logic
+    *   **Performance:** Filtering happens during scanning with no post-processing overhead
 *   **Multiple Output Formats:**
     *   **Text:** Human-readable colored terminal output with proper formatting
+    *   **Tree:** Hierarchical visualization of certificate signing relationships
     *   **JSON:** Newline-delimited JSON with full certificate metadata and duplicate tracking
     *   **SQLite:** Relational database with `certificate` and `occurrence` tables for complex queries
     *   Can combine formats (e.g., `--json --sqlite` for both outputs simultaneously)
+*   **Certificate Relationship Visualization:**
+    *   Tree view showing parent-child signing relationships
+    *   Automatic root certificate detection (self-signed)
+    *   Nested display of certificate chains
+    *   Compatible with all filtering options
 *   **Flexible Extraction:** Extract certificates in DER format, PEM format, or both (default).
 *   **Verbose Mode:** Additional details including DER lengths, PEM block offsets, worker thread status, and parse diagnostics.
 
@@ -257,6 +304,259 @@ When run with `--dump`, `cert-dump` creates files in the specified output direct
 *   ...and so on
 
 Use `--der` or `--pem` flags to restrict output to a single format.
+
+### Certificate Filtering
+
+`cert-dump` supports comprehensive certificate filtering based on various fields. All filters use **fuzzy matching** (case-insensitive, substring search) and can be specified multiple times for OR logic.
+
+#### Filter Categories
+
+**Distinguished Name (DN) Fields:**
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--org <ORG>` | Organization (O) | `--org Apple --org Microsoft` |
+| `--ou <OU>` | Organizational Unit (OU) | `--ou Engineering` |
+| `--common <COMMON>` | Common Name (CN) | `--common "*.apple.com"` |
+| `--country <COUNTRY>` | Country (C) | `--country US --country GB` |
+| `--locality <LOCALITY>` | Locality (L) | `--locality "San Francisco"` |
+| `--state <STATE>` | State/Province (ST) | `--state California` |
+| `--subject <TEXT>` | Full Subject DN | `--subject "Apple Inc"` |
+| `--issuer <TEXT>` | Full Issuer DN | `--issuer "DigiCert"` |
+
+**Certificate Identifiers:**
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--serial <SERIAL>` | Serial number (hex substring) | `--serial 1A2B3C` |
+| `--sha256 <HASH>` | SHA-256 fingerprint (substring) | `--sha256 da98f640` |
+
+**Cryptographic Algorithms:**
+
+| Flag | Description | Example |
+|------|-------------|---------|
+| `--key-algo <ALGO>` | Public key algorithm | `--key-algo rsa`, `--key-algo ec` |
+| `--sig-algo <ALGO>` | Signature algorithm | `--sig-algo sha256`, `--sig-algo ecdsa` |
+| `--key-size <BITS>` | Public key size in bits | `--key-size 2048 --key-size 4096` |
+
+**Validity Period:**
+
+| Flag | Description |
+|------|-------------|
+| `--expired` | Show only expired certificates |
+| `--valid` | Show only currently valid certificates |
+
+#### Smart Algorithm Matching
+
+**Public Key Algorithm (`--key-algo`):**
+- `rsa` → Any RSA variant
+- `rsa-pss`, `pss` → RSA-PSS specifically
+- `ec`, `ecc` → Any elliptic curve
+- `ecdsa` → ECDSA specifically
+- `ed25519`, `ed448`, `eddsa` → EdDSA algorithms
+- `dilithium`, `ml-dsa` → Post-quantum Dilithium/ML-DSA
+- `kyber`, `ml-kem` → Post-quantum Kyber/ML-KEM
+- `sm2` → Chinese SM2
+- `gost` → Russian GOST
+
+**Signature Algorithm (`--sig-algo`):**
+- `sha` → Any SHA-based signature
+- `sha1`, `sha-1` → SHA-1 specifically
+- `sha2` → SHA-256, SHA-384, or SHA-512
+- `sha256`, `sha-256` → SHA-256 specifically
+- `rsa` → Any RSA signature
+- `ecdsa` → ECDSA signatures
+- `md5` → MD5 signatures (deprecated)
+
+#### Filter Logic
+
+**Multiple Values (OR):** Same flag multiple times creates OR condition
+```bash
+# Find certificates from Apple OR Microsoft
+cert-dump -R --org Apple --org Microsoft /path
+```
+
+**Multiple Flags (AND):** Different flags create AND condition
+```bash
+# Find Apple certificates with EC keys
+cert-dump -R --org Apple --key-algo ec /path
+```
+
+**Complex Filtering:**
+```bash
+# Find certificates that are:
+# - From Apple OR Google (OR)
+# - Using EC keys (AND)
+# - Currently valid (AND)
+cert-dump -R --org Apple --org Google --key-algo ec --valid /path
+```
+
+#### Filtering Examples
+
+**Security Auditing:**
+```bash
+# Find weak certificates with SHA-1
+cert-dump -R --sig-algo sha1 /path
+
+# Find small RSA keys
+cert-dump -R --key-algo rsa --key-size 1024 /path
+
+# Find expired certificates
+cert-dump -R --expired --dump -o expired_certs /path
+```
+
+**Certificate Inventory:**
+```bash
+# Catalog by vendor
+cert-dump -R --org Apple --sqlite apple.db /System/Library/Keychains
+cert-dump -R --org DigiCert --sqlite digicert.db /System/Library/Keychains
+
+# Catalog by algorithm
+cert-dump -R --key-algo ec --json /path > ec_certs.jsonl
+```
+
+**Combined with Other Features:**
+```bash
+# Extract filtered certificates
+cert-dump -R --org Apple --key-algo ec --dump -o apple_ec /path
+
+# Filter and visualize in tree format
+cert-dump -R --org "Let's Encrypt" --tree /path
+
+# Filter and export to JSON
+cert-dump -R --expired --json /path | jq 'select(.public_key_bits < 2048)'
+
+# Use verbose mode to see filtering statistics
+cert-dump -R --org Apple -v /path
+# Output: Filtered out 250 certificate(s) that didn't match criteria
+```
+
+**Migration Planning:**
+```bash
+# Find legacy algorithm usage
+cert-dump -R --sig-algo md5 /path
+cert-dump -R --sig-algo sha1 /path
+
+# Find modern certificates (SHA-256 with strong keys)
+cert-dump -R --sig-algo sha256 --key-size 2048 --key-size 4096 /path
+```
+
+For complete filtering documentation with all algorithm variants and advanced examples, see [FILTERING.md](FILTERING.md).
+
+### Certificate Tree Visualization
+
+The `--tree` flag displays certificates in a hierarchical tree format, showing parent-child signing relationships. This helps visualize certificate chains and understand trust relationships within PKI hierarchies.
+
+#### Overview
+
+The tree view automatically:
+- Links certificates based on issuer/subject Distinguished Names (DNs)
+- Identifies root certificates (self-signed)
+- Nests child certificates beneath their signing parents
+- Shows certificate details inline with proper indentation
+
+#### Basic Usage
+
+```bash
+# Display all certificates in tree format
+cert-dump --recursive /path/to/certs --tree
+
+# Single file with certificate chain
+cert-dump cert-chain.pem --tree
+
+# Analyze system certificate stores
+cert-dump -R --tree /System/Library/Keychains/
+```
+
+#### Output Format
+
+The tree displays:
+- **Certificate number** - Unique index in scan
+- **Subject DN** - Identifying information (truncated to 60 chars)
+- **Serial number** - Hex-encoded serial
+- **Issuer DN** - Who signed this certificate (for non-self-signed)
+- **Root marker** - `[ROOT/Self-Signed]` for self-signed certificates
+
+**Example Output:**
+```
+Certificate Relationship Tree
+================================================================================
+
+Certificate #0 CN=Root CA, O=Example Corp, C=US [ROOT/Self-Signed]
+   Serial: 0E068A98C23823B2F51C1734E83B156D1F4E9401
+   └─ Certificate #2 CN=Intermediate CA, O=Example Corp, C=US
+      Serial: 1095E96F97590B45E75F3276DFB31B933D90BAA1
+      Issued by: CN=Root CA, O=Example Corp, C=US
+      └─ Certificate #1 CN=example.com, O=Example Corp, C=US
+         Serial: 0E3D9F6C511979EB0F88418DB048905F5D39B560
+         Issued by: CN=Intermediate CA, O=Example Corp, C=US
+```
+
+#### Combined with Filtering
+
+Tree view works seamlessly with all filtering options:
+
+```bash
+# Show only RSA certificates and their relationships
+cert-dump -R --tree --key-algo rsa /path/to/certs
+
+# Visualize only valid certificates from a specific organization
+cert-dump -R --tree --valid --org "Let's Encrypt" /path
+
+# Show expired certificate chains
+cert-dump -R --tree --expired /path
+
+# Find and visualize specific certificate types
+cert-dump -R --tree --key-algo ec --key-size 384 /path
+```
+
+#### Use Cases
+
+**Analyzing System Certificate Stores:**
+```bash
+# macOS system roots
+cert-dump -R --tree /System/Library/Keychains/
+
+# Linux system CA bundle
+cert-dump --tree /etc/ssl/certs/ca-certificates.crt
+```
+
+**Verifying Certificate Chains:**
+```bash
+# Check if leaf certificate chains to expected root
+cert-dump -R --tree ./certificate-bundle/
+```
+
+**Auditing PKI Hierarchies:**
+```bash
+# Find all certificates signed by a specific CA
+cert-dump -R --tree --issuer "Intermediate CA" /pki/
+```
+
+**Debugging TLS Issues:**
+```bash
+# Visualize certificate relationships in TLS bundle
+cert-dump --tree server-bundle.pem
+```
+
+#### Technical Details
+
+**Linking Logic:**
+- Certificates are linked when child's Issuer DN matches parent's Subject DN
+- Self-signed certificates (Subject DN == Issuer DN) are treated as roots
+- Orphan certificates (no parent found) are listed separately
+
+**Performance:**
+- O(n) tree construction using hash-based DN lookups
+- Efficient even for large certificate stores (thousands of certificates)
+- Circular reference protection prevents infinite loops
+
+**Limitations:**
+- Links by DN only, not by cryptographic signature verification
+- Long DNs truncated to 60 characters for readability
+- First match used when multiple certificates share same Subject DN
+
+For complete tree visualization documentation including advanced scenarios and examples, see [TREE.md](TREE.md).
 
 ### Performance
 

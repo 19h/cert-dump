@@ -291,7 +291,7 @@ fn print_node(
         
         // Print additional info
         let info_prefix = if prefix.is_empty() {
-            "   "
+            "   ".to_string()
         } else if is_last {
             format!("{}   ", prefix)
         } else {
@@ -319,7 +319,7 @@ fn print_node(
         // Print children
         if let Some(children) = children_map.get(&index) {
             let child_prefix = if prefix.is_empty() {
-                "   "
+                "   ".to_string()
             } else if is_last {
                 format!("{}   ", prefix)
             } else {
