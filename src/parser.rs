@@ -123,16 +123,36 @@ fn as_chrono_time(t: &ASN1Time) -> Result<DateTime<Utc>> {
 fn map_signature_oid(oid: &Oid) -> &'static str {
     let s = oid.to_id_string();
     match s.as_str() {
+        // RSA PKCS#1 v1.5 with hash functions
+        "1.2.840.113549.1.1.4" => "md5WithRSAEncryption",
         "1.2.840.113549.1.1.5" => "sha1WithRSAEncryption",
+        "1.2.840.113549.1.1.14" => "sha224WithRSAEncryption",
         "1.2.840.113549.1.1.11" => "sha256WithRSAEncryption",
         "1.2.840.113549.1.1.12" => "sha384WithRSAEncryption",
         "1.2.840.113549.1.1.13" => "sha512WithRSAEncryption",
+        
+        // RSA-PSS (parameterized)
+        "1.2.840.113549.1.1.10" => "RSASSA-PSS",
+        
+        // DSA with hash functions
+        "1.2.840.10040.4.3" => "dsa-with-sha1",
+        "2.16.840.1.101.3.4.3.1" => "dsa-with-sha224",
+        "2.16.840.1.101.3.4.3.2" => "dsa-with-sha256",
+        
+        // ECDSA with hash functions
         "1.2.840.10045.4.1" => "ecdsa-with-SHA1",
+        "1.2.840.10045.4.3.1" => "ecdsa-with-SHA224",
         "1.2.840.10045.4.3.2" => "ecdsa-with-SHA256",
         "1.2.840.10045.4.3.3" => "ecdsa-with-SHA384",
         "1.2.840.10045.4.3.4" => "ecdsa-with-SHA512",
+        
+        // Modern elliptic curves (EdDSA)
         "1.3.101.112" => "Ed25519",
         "1.3.101.113" => "Ed448",
+        
+        // Chinese national standards (SM series)
+        "1.2.156.10197.1.501" => "sm2sign-with-sm3",
+        
         _ => "unknown",
     }
 }
@@ -140,10 +160,26 @@ fn map_signature_oid(oid: &Oid) -> &'static str {
 fn map_pubkey_oid(oid: &Oid) -> &'static str {
     let s = oid.to_id_string();
     match s.as_str() {
+        // RSA
         "1.2.840.113549.1.1.1" => "RSA",
+        "1.2.840.113549.1.1.10" => "RSA-PSS",
+        "1.2.840.113549.1.1.7" => "RSA-OAEP",
+        
+        // DSA
+        "1.2.840.10040.4.1" => "DSA",
+        
+        // Elliptic Curve
         "1.2.840.10045.2.1" => "EC",
+        
+        // Modern curves (X25519/X448 for ECDH, Ed25519/Ed448 for signatures)
+        "1.3.101.110" => "X25519",
+        "1.3.101.111" => "X448",
         "1.3.101.112" => "Ed25519",
         "1.3.101.113" => "Ed448",
+        
+        // Chinese national standards
+        "1.2.156.10197.1.301" => "SM2",
+        
         _ => "unknown",
     }
 }
@@ -152,16 +188,27 @@ fn extract_key_bits(spki: &SubjectPublicKeyInfo) -> Option<u32> {
     let algo_str = spki.algorithm.algorithm.to_id_string();
     
     match algo_str.as_str() {
-        "1.2.840.113549.1.1.1" => {
-            // RSA: parse the BIT STRING to get modulus
+        // RSA algorithms
+        "1.2.840.113549.1.1.1" |  // rsaEncryption
+        "1.2.840.113549.1.1.10" | // RSASSA-PSS
+        "1.2.840.113549.1.1.7" => { // RSAES-OAEP
             rsa_bits_from_spki(spki)
         }
+        
+        // Elliptic Curve
         "1.2.840.10045.2.1" => {
-            // EC: get curve from parameters
             ec_bits_from_params(spki)
         }
-        "1.3.101.112" => Some(256), // Ed25519
-        "1.3.101.113" => Some(456), // Ed448
+        
+        // Modern elliptic curves with fixed sizes
+        "1.3.101.110" => Some(255), // X25519 (Curve25519 for ECDH)
+        "1.3.101.111" => Some(448), // X448 (Curve448 for ECDH)
+        "1.3.101.112" => Some(255), // Ed25519 (Curve25519 for signatures)
+        "1.3.101.113" => Some(448), // Ed448 (Curve448 for signatures)
+        
+        // Chinese SM2 (elliptic curve)
+        "1.2.156.10197.1.301" => Some(256), // SM2 uses 256-bit curve
+        
         _ => None,
     }
 }
@@ -196,17 +243,32 @@ fn rsa_bits_from_spki(spki: &SubjectPublicKeyInfo) -> Option<u32> {
 
 fn ec_bits_from_params(spki: &SubjectPublicKeyInfo) -> Option<u32> {
     // EC parameters contain the curve OID
-    let params_bytes = spki.algorithm.parameters.as_ref()?;
-    if let Ok((_,params)) = der_parser::parse_der(params_bytes.as_bytes()) {
-        if let der_parser::der::DerObjectContent::OID(oid) = params.content {
-            let curve_str = oid.to_id_string();
-            return match curve_str.as_str() {
-                "1.2.840.10045.3.1.7" => Some(256),  // prime256v1 (P-256)
-                "1.3.132.0.34" => Some(384),         // secp384r1
-                "1.3.132.0.35" => Some(521),         // secp521r1
-                _ => None,
-            };
-        }
+    let params = spki.algorithm.parameters.as_ref()?;
+    
+    // Parse the curve OID from the parameters
+    if let Ok(oid) = params.as_oid() {
+        let curve_str = oid.to_id_string();
+        return match curve_str.as_str() {
+            // NIST/ANSI X9.62 prime curves (P-curves)
+            "1.2.840.10045.3.1.1" => Some(192),  // secp192r1 / P-192 / prime192v1
+            "1.3.132.0.33" => Some(224),         // secp224r1 / P-224
+            "1.2.840.10045.3.1.7" => Some(256),  // secp256r1 / P-256 / prime256v1
+            "1.3.132.0.34" => Some(384),         // secp384r1 / P-384
+            "1.3.132.0.35" => Some(521),         // secp521r1 / P-521
+            
+            // SECG curves
+            "1.3.132.0.10" => Some(256),         // secp256k1 (Bitcoin curve)
+            
+            // Brainpool curves (RFC 5639)
+            "1.3.36.3.3.2.8.1.1.7" => Some(256), // brainpoolP256r1
+            "1.3.36.3.3.2.8.1.1.11" => Some(384), // brainpoolP384r1
+            "1.3.36.3.3.2.8.1.1.13" => Some(512), // brainpoolP512r1
+            
+            // Chinese national standard
+            "1.2.156.10197.1.301" => Some(256),  // sm2p256v1
+            
+            _ => None,
+        };
     }
     
     None

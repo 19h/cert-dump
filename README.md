@@ -117,11 +117,31 @@ MIIDXTCCAkWgAwIBAgIJAKL0UG...
 
 #### Public Key Algorithms
 
-This tool recognizes and displays key information for common algorithms:
+This tool recognizes and displays key information for a comprehensive set of cryptographic algorithms:
 
-*   **RSA:** Extracts modulus bit length (e.g., 2048, 4096 bits)
-*   **EC (Elliptic Curve):** Identifies curves like P-256, P-384, P-521
-*   **Ed25519/Ed448:** Modern elliptic curve algorithms
+**RSA Variants:**
+*   **RSA:** Standard RSA encryption and signatures (extracts modulus bit length: 1024, 2048, 4096, 8192+ bits)
+*   **RSA-PSS:** Probabilistic Signature Scheme
+*   **RSA-OAEP:** Optimal Asymmetric Encryption Padding
+
+**DSA:**
+*   **DSA:** Digital Signature Algorithm with SHA-1, SHA-224, SHA-256
+
+**Elliptic Curve Cryptography:**
+*   **NIST/ANSI Curves:** P-192, P-224, P-256, P-384, P-521 (secp curves)
+*   **SECG Curves:** secp256k1 (Bitcoin curve)
+*   **Brainpool Curves:** brainpoolP256r1, brainpoolP384r1, brainpoolP512r1
+*   **Modern Curves:** X25519, X448 (ECDH), Ed25519, Ed448 (EdDSA)
+
+**Chinese National Standards:**
+*   **SM2:** Chinese elliptic curve public key algorithm (256-bit)
+*   **SM3:** Chinese hash algorithm
+
+**Signature Algorithms Recognized:**
+*   RSA with MD5, SHA-1, SHA-224, SHA-256, SHA-384, SHA-512
+*   ECDSA with SHA-1, SHA-224, SHA-256, SHA-384, SHA-512
+*   EdDSA (Ed25519, Ed448)
+*   SM2 with SM3
 
 ### Output File Structure
 
